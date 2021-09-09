@@ -2,7 +2,7 @@
 title: "Predicting Continental US Wild Fires"
 author: "Christoph Eberle"
 date: "9/8/2021"
-output: html_document
+output: github_document
 ---
 
 ![](misc/wildfire.jpg){width="777"}

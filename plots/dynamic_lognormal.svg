@@ -27,7 +27,7 @@
 <text text-anchor="middle" x="72" y="-379.68" font-family="Times,serif" font-size="14.00">Normal</text>
 </g>
 <!-- Λ -->
-<g id="node2" class="node">
+<g id="node4" class="node">
 <title>Λ</title>
 <polygon fill="none" stroke="black" points="118.5,-313.91 25.5,-313.91 25.5,-260.91 118.5,-260.91 118.5,-313.91"/>
 <text text-anchor="middle" x="72" y="-298.71" font-family="Times,serif" font-size="14.00">Λ</text>
@@ -40,6 +40,14 @@
 <path fill="none" stroke="black" d="M72,-360.79C72,-349.05 72,-336.06 72,-324.37"/>
 <polygon fill="black" stroke="black" points="75.5,-324.06 72,-314.06 68.5,-324.06 75.5,-324.06"/>
 </g>
+<!-- N -->
+<g id="node2" class="node">
+<title>N</title>
+<ellipse fill="lightgrey" stroke="black" cx="72" cy="-76.48" rx="42.35" ry="37.45"/>
+<text text-anchor="middle" x="72" y="-87.78" font-family="Times,serif" font-size="14.00">N</text>
+<text text-anchor="middle" x="72" y="-72.78" font-family="Times,serif" font-size="14.00">~</text>
+<text text-anchor="middle" x="72" y="-57.78" font-family="Times,serif" font-size="14.00">Poisson</text>
+</g>
 <!-- λ -->
 <g id="node3" class="node">
 <title>λ</title>
@@ -48,25 +56,17 @@
 <text text-anchor="middle" x="72" y="-183.73" font-family="Times,serif" font-size="14.00">~</text>
 <text text-anchor="middle" x="72" y="-168.73" font-family="Times,serif" font-size="14.00">Lognormal</text>
 </g>
-<!-- Λ&#45;&gt;λ -->
-<g id="edge2" class="edge">
-<title>Λ&#45;&gt;λ</title>
-<path fill="none" stroke="black" d="M72,-260.66C72,-252.84 72,-243.99 72,-235.23"/>
-<polygon fill="black" stroke="black" points="75.5,-235.05 72,-225.05 68.5,-235.05 75.5,-235.05"/>
-</g>
-<!-- N -->
-<g id="node4" class="node">
-<title>N</title>
-<ellipse fill="lightgrey" stroke="black" cx="72" cy="-76.48" rx="42.35" ry="37.45"/>
-<text text-anchor="middle" x="72" y="-87.78" font-family="Times,serif" font-size="14.00">N</text>
-<text text-anchor="middle" x="72" y="-72.78" font-family="Times,serif" font-size="14.00">~</text>
-<text text-anchor="middle" x="72" y="-57.78" font-family="Times,serif" font-size="14.00">Poisson</text>
-</g>
 <!-- λ&#45;&gt;N -->
 <g id="edge3" class="edge">
 <title>λ&#45;&gt;N</title>
 <path fill="none" stroke="black" d="M72,-149.85C72,-141.67 72,-132.89 72,-124.37"/>
 <polygon fill="black" stroke="black" points="75.5,-124.15 72,-114.15 68.5,-124.15 75.5,-124.15"/>
+</g>
+<!-- Λ&#45;&gt;λ -->
+<g id="edge2" class="edge">
+<title>Λ&#45;&gt;λ</title>
+<path fill="none" stroke="black" d="M72,-260.66C72,-252.84 72,-243.99 72,-235.23"/>
+<polygon fill="black" stroke="black" points="75.5,-235.05 72,-225.05 68.5,-235.05 75.5,-235.05"/>
 </g>
 </g>
 </svg>

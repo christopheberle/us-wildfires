@@ -6,15 +6,15 @@ Normal"]
 		label=24 labeljust=r labelloc=b style=rounded
 	}
 	subgraph cluster120 {
-		"Λ" [label="Λ
-~
-Deterministic" shape=box]
-		"λ" [label="λ
-~
-Lognormal"]
 		N [label="N
 ~
 Poisson" style=filled]
+		"λ" [label="λ
+~
+Lognormal"]
+		"Λ" [label="Λ
+~
+Deterministic" shape=box]
 		label=120 labeljust=r labelloc=b style=rounded
 	}
 	"β" -> "Λ"
