@@ -1,0 +1,23 @@
+digraph {
+	subgraph cluster24 {
+		"β" [label="β
+~
+Normal"]
+		label=24 labeljust=r labelloc=b style=rounded
+	}
+	subgraph cluster120 {
+		"Λ" [label="Λ
+~
+Deterministic" shape=box]
+		"λ" [label="λ
+~
+Lognormal"]
+		N [label="N
+~
+Poisson" style=filled]
+		label=120 labeljust=r labelloc=b style=rounded
+	}
+	"β" -> "Λ"
+	"Λ" -> "λ"
+	"λ" -> N
+}

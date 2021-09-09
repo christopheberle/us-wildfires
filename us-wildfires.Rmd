@@ -1,0 +1,328 @@
+---
+title: "Predicting Continental US Wild Fires"
+author: "Christoph Eberle"
+date: "9/8/2021"
+output: html_document
+---
+
+![](misc/wildfire.jpg){width="777"}
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(comprehenr)
+library(lubridate)
+library(reticulate)
+library(ggridges)
+library(knitr)
+library(latex2exp)
+library(forecast)
+library(DT)
+ggplot2::theme_set(theme_light())
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  warning = FALSE, 
+  message = FALSE, 
+  error = FALSE, 
+  fig.align = "center"
+  )
+```
+
+```{python py-setup, include=FALSE}
+import numpy as np
+import matplotlib.pyplot as plt
+import pymc3 as pm
+import arviz as az
+from copy import copy
+
+def fourier_series(t, p=365.25, n=10):
+    # 2 pi n / p
+    x = 2 * np.pi * np.arange(n) / p
+    # 2 pi n / p * t
+    x = x * t[:, None]
+    x = np.concatenate((np.cos(x), np.sin(x)), axis=1)
+    return x
+
+def det_dot(a, b):
+    """
+    The theano dot product and NUTS sampler don't work with large matrices?
+    
+    :param a: (np matrix)
+    :param b: (theano vector)
+    """
+    return (a * b[None, :]).sum(axis=-1)
+```
+
+# Introduction
+
+Climate change is a problem that affects us on a global scale. One indicator for climate change are wildfires[^1]. In this analysis we will use a data set hosted by the US' National Incident Feature Service (NIFS) of the [National Wildfire Coordinating Group](https://www.nwcg.gov) (NWCG). that contains among other features the start and end dates of wildfires occurrences from 1980 to 2016.
+
+[^1]: <https://www.wwf.de/fileadmin/fm-wwf/Publikationen-PDF/WWF-Study-Forests-Ablaze.pdf>
+
+Our goal is to try and build a model that can predict the number of wild fires in the future, based on the data provided by this data set. For this task we will employ the highly flexibly Log-Normal-Poisson model and extend it to allow for modelling time-dependent modelling.
+
+# Preparing the data
+
+The data set `data/wf_nps_1980_2016.dbf` contains many columns that are not interesting for our objective - in fact, we will only need the starting date (`STARTDATED`) of the wild fires. For visualisation purposes we will additionally keep the longitude (`DLONGITUDE`) and latitude (`DLATITUDE`) of the wildfire.
+
+```{r}
+df_raw <- foreign::read.dbf("data/wf_nps_1980_2016.dbf")
+df_raw %>% head(n=10)
+```
+
+Now we are going to do some pre-processing:
+
+-   We will only consider the continental US, i.e. not Alaska thus we drop all entries with `DLONGITUDE` \> 130
+
+-   Rename the columns to `Year`, `StartDate`, `Longitude`, `Latitude`
+
+-   Drop all columns but `Year`, `StartDate`, `Longitude`, `Latitude`
+
+```{r}
+df <-  df_raw %>% 
+  select(STARTDATED, DLATITUDE, DLONGITUDE) %>%
+  mutate(StartDate = as.POSIXct(STARTDATED, format="%Y-%m-%d"),
+         Longitude=DLONGITUDE,
+         Latitude = DLATITUDE) %>%
+  select(StartDate, Longitude, Latitude) %>%
+  filter(Longitude > -130)
+```
+
+After these steps our data set looks like this
+
+```{r, echo=FALSE}
+df %>%
+  arrange(desc(StartDate)) %>%
+  head(n=10)
+```
+
+Now that we have cleaned up our data set we are going to group our data by month and sum up all wildfire incidents that occurred withing that month. We obtain a time series containing the number of wildfires per month from `r year(min(df$StartDate))` to `r year(max(df$StartDate))`. Each data point corresponds to one month. We can take a look at the data again
+
+```{r, echo=FALSE}
+num_fires <- df %>% 
+  group_by(month = floor_date(StartDate, "month")) %>% 
+  summarise(NFires=n()) 
+```
+
+```{r, echo=FALSE}
+num_fires %>%
+  head(n=10)
+```
+
+Plotting the entire data frame reveals the following dynamics of the number of wild fires per month in the US.
+
+```{r, echo=FALSE}
+num_fires %>% ggplot(aes(month, NFires)) + geom_line(colour="blue") + ylab("number of wildfires") + xlab("year") + ggtitle("Number of monthly wildfires in continental US from 1980 to 2016")
+```
+
+Now that we have our data cleaned and ready to be analysed we will do just that. But before we can get into actually predicting new future wildfires we first should take some time to understand our model.
+
+# Building the model
+
+The data we are looking at is count data, i.e. *non-negative* and *discrete* data - the number of wild fires in a given month. Our goal is to predict the number of wildfires in the future and for this we need to build a model. Count data in general is modelled by a Poisson distribution which takes a parameter $\Lambda\in (0,\infty]$ (the emission rate) and outputs a *discrete* number on the positive real line $N\in\mathbb N$. The emission rate $\lambda$ controls how many counts are produced on average.
+
+Now in our case we do not know $\Lambda$, in fact $\Lambda$ is precisely what we are trying to infer. As such we will rely on a hierarchical model which we will build up step by step. In a first, very crude approximation we will treat $\Lambda$ as constant. While this obviously does not describe the temporal dynamics displayed by our data set, it can describe the time-averaged data set which we assume is generated by a *homogeneous* Poisson process with emission rate $\overline\Lambda=\langle\Lambda\rangle$.
+
+## The Log-Normal-Poisson Model
+
+A common way to model homogeneous Poisson processes with an unknown (but constant) emission rate $\Lambda$ is the so-called Log-Normal-Poisson model. Since $\Lambda$ is unknown we need a model for $\Lambda$ itself. A reasonable approach would be to model $\Lambda$ as $\Lambda\hookleftarrow\mathcal G(\log\langle N\rangle,\sigma)$, i.e. we assume $\Lambda$ is Gaussian distributed with its mean being the sample mean $\langle N\rangle$ (number of wildfires averaged over time) and some covariance term $\sigma$. One issue with this approach is that the Poisson distribution only allows positive-definite values $\Lambda\in (0,\infty]$ for the emission rate. To fix this we exponentiate $\Lambda$ and introduce a new parameter $\lambda = e^\Lambda$. This parameter is log-normally distributed (because taking the log of $\lambda$ yields $\Lambda$ which is normally / Gaussian distributed). The number of wild fires is then modelled by a Poisson distribution $\mathcal P(\lambda)$ with emission rate $\lambda=e^{\Lambda}$. A schematic representation of this model is given in \@ref(fig:graph-log-normal)
+
+```{python}
+with pm.Model() as model:
+  log_sigma = pm.HalfCauchy("σ", 1.0)
+  x = pm.Normal("Λ", np.log(r.num_fires["NFires"].mean()), 10.0)
+  lam = pm.Lognormal("λ", x, log_sigma)
+  N = pm.Poisson("N", lam, observed = r.num_fires["NFires"])
+  trace = pm.sample(1000, chains=1)
+```
+
+```{python, echo=FALSE}
+with model:
+  graph = pm.model_to_graphviz(model=model)
+  _ = graph.render("plots/lognormal", format="svg")
+  _ = az.plot_trace(trace)
+  _ = plt.savefig("plots/lognormal_trace.svg")
+```
+
+```{r graph-log-normal, echo=FALSE,fig.cap="schematic representation of the hierarchical model for a homogeneous Poisson process."}
+knitr::include_graphics('plots/lognormal.svg')
+```
+
+Before advancing to a more complex model we can test our model on the data set. Obviously we cannot expect the model to accurately describe our data since it cannot account for the temporal variation in $\lambda$, however both the model and the data set should agree in the temporal mean. One thing to keep in mind is that hierarchical models rarely have analytic solutions. As such we will use the Python packages [PyMC3](https://docs.pymc.io) which allows us to approximate the Bayesian posterior with Markov Chain Monte Carlo (MCMC) sampling.
+
+```{r, fig.align='center', echo=FALSE}
+knitr::include_graphics('plots/lognormal_trace.svg') 
+```
+
+Let's take a second to take a look at the trace plot of our model.
+
+```{python, echo=FALSE}
+ppc = pm.sample_posterior_predictive(trace, model=model)
+post_mean = ppc["N"].mean(axis=0)
+post_std = ppc["N"].std(axis=0)
+```
+
+```{r, fig.align='center', echo=FALSE}
+data.frame(
+  time = num_fires$month,
+  NFires = num_fires$NFires,
+  post.mean = py$post_mean,
+  post.std = py$post_std
+) %>% 
+  ggplot(aes(time, NFires, colour="ground truth")) + 
+  geom_line() + 
+  geom_line(aes(y=post.mean, colour = "posterior mean")) + 
+  geom_ribbon(aes(ymin = post.mean - post.std, ymax = post.mean + post.std, 
+                  fill="confidence interval"), alpha=0.3) +
+  geom_hline(aes(yintercept=mean(NFires), colour="empirical mean")) + 
+  scale_colour_manual(values = c(
+    "ground truth" = "blue",
+    "posterior mean" = "green",
+    "empirical mean" = "red",
+    "confidence interval" = "black"
+  )) + 
+  ylab("number of wildfires") +
+  xlab("year")
+```
+
+## A Dynamic Log-Normal-Poisson Model
+
+In the previous section we built a model for a constant (or averaged) emission parameter $\lambda$. However, a quick look at the data reveals that this parameter is definitely not constant, but rather time-dependent. This means we must model the number of wildfires with an *inhomogeneous Poisson process* with time-dependent emission parameter $\lambda(t)$. Our strategy will be to find a differential equation that describes the time-evolution of the $\lambda$. Once obtained we can use the differential equation to predict future values for $\lambda$ and in turn predict the number of wild fires. One thing that helps us in this task is that the data shows very strong periodicity as can be seen in the autocorrelation function plot below.
+
+```{r, echo=FALSE}
+ggAcf(num_fires$NFires, lag.max = 50) + ggtitle("Autocorrelation function")
+```
+
+Looking at the autocorrelation function we see that
+
+1.  The data shows constant periodicity, i.e. the period does not change (significantly) over time
+2.  The autocorrelation function decays extremely slowly
+
+Combining these two points we can propose the following functional form for $\lambda(t)$
+
+$$
+\lambda_N(t)=\frac{\beta_0}{2}+\sum\limits_{n=0,2,4,\dots}^{N}\left[\beta_n\cos\left(\frac{2\pi}{P}nt\right) + \beta_{n+1}\sin\left(\frac{2\pi}{P}nt\right)\right]
+$$
+
+where
+
+-   $\beta_0$ is a global offset
+
+-   $\beta_{1}\cdots\beta_N$ are the Fourier expansion coefficients.
+
+The inference task now consists of finding the optimal set of parameters $\boldsymbol{\beta}^{\intercal}=(\beta_0,\beta_1,\dots,\beta_N)^{\intercal}$
+
+```{python, warning=FALSE, message=FALSE, error=FALSE}
+n = 12
+P = 12
+model = pm.Model()
+d = r.num_fires["NFires"][300:-24]
+
+with model:
+    beta = pm.Normal("β",mu=0, sd=10, shape=2 * n)
+    log_lam = pm.Deterministic("Λ", det_dot(fourier_series(np.arange(len(d)),P,n), beta))
+    lam = pm.Lognormal("λ", mu=log_lam, sigma=1.0, shape=len(d))
+    obs = pm.Poisson("N", mu=lam, observed=d)
+    trace = pm.sample(1000,chains=1,return_inferencedata=True)
+```
+
+```{python, echo=FALSE}
+with model:
+    graph = pm.model_to_graphviz()
+    _ = graph.render("plots/dynamic_lognormal", format="svg")
+    az.plot_trace(trace)
+    _ = plt.savefig("plots/dynamic_lognormal_trace.svg")
+```
+
+```{r graph-dynamic-log-normal, echo=FALSE}
+knitr::include_graphics('plots/dynamic_lognormal.svg')
+```
+
+# Predicting future wildfires
+
+For our model we will use $N=12$ Fourier frequencies, thus $\boldsymbol{\beta}^{\intercal}\in\mathbb R^{24}$ is a $d=24$-dimensional (one $\sin$ and one $\cos$ function per Fourier mode) vector. As a period we choose $P=12$. This value was chosen because the data displays a yearly periodicity in the autocorrelation function plot. A graphical representation of the model can be found in \@ref(fig:graph-dynamic-log-normal).
+
+Now we actually fit our model to the data using MCMC sampling. The trace plot can be found below in \@ref(fig:trace-dynamic-log-normal)
+
+```{r trace-dynamic-log-normal, echo=FALSE}
+knitr::include_graphics("plots/dynamic_lognormal_trace.svg")
+```
+
+Looking at the trace plot we see that the Markov Chains and therefore the model has converged nicely. Now we sample from the posterior and see if the posterior mean can reproduce the training data.
+
+```{python, echo=FALSE}
+with model:
+    ppc = pm.sample_posterior_predictive(trace)
+    post_mean = ppc["N"].mean(axis=0)
+    post_std = ppc["N"].std(axis=0)
+```
+
+The posterior predictive check (see \@ref(fig:ppc-dynamic-log-normal)) is looking good. The posterior is able to reconstruct the input data within it's $1\sigma$ confidence interval.
+
+```{r ppc-dynamic-log-normal, echo=FALSE}
+r.ppc <- data.frame(
+  t = seq(1,length(py$d)),
+  m = py$post_mean,
+  S = py$post_std 
+)
+
+num_fires %>% 
+  slice(c(301:(dim(num_fires)[1]-24))) %>% 
+  cbind(r.ppc) %>% 
+  ggplot(aes(month)) + 
+    geom_line(aes(y=NFires), colour="blue") + 
+    geom_line(aes(y=m), colour="orange") + 
+    geom_ribbon(aes(ymin=m-S, ymax=m+S),  alpha=0.25) + ylab("number of wild fires") + 
+    ggtitle("posterior predictive check")
+```
+
+```{python, echo=FALSE}
+with model:
+  map_estimate = pm.find_MAP()
+```
+
+```{python}
+lambda_map = det_dot(fourier_series(np.arange(24),12,n), map_estimate["β"])
+N_post_samps = 100
+post_samps = np.zeros((N_post_samps, 24))
+
+t = np.arange(24)
+for i in range(N_post_samps):
+    a = np.random.lognormal(lambda_map, 1.0, size=24)
+    pred = np.random.poisson(a, size=24)
+    post_samps[i, :] = pred
+
+m = post_samps.mean(axis=0)
+S = post_samps.std(axis=0)
+```
+
+Having checked the model's convergence as well as having performed a posterior predictive check we can finally make a prediction for future wildfires. We fitted the model on all *but* the last 24 data points (the last two years). To make a prediction we proceed as follows. First we use the obtained values for $\boldsymbol\beta^{\intercal}$ from the maximum a posteriori (MAP) solution to find the values for $\lambda(t)$ in the years 2015-2016. Next we plug these values into the log-normal distribution from which we then draw a sample value $\lambda^{\star}$. Finally this value is put into the Poisson distribution and produces a sample for the number of wildfires at that time $N^{\star}\hookleftarrow\mathcal P(\lambda^{\star})$. We repeat this process for `r py$N_post_samps` times and calculate the posterior mean. This is seen below.
+
+```{r}
+colors <- c("posterior mean" = "blue", "ground truth" = "red")
+
+df_pred <- data.frame(
+  m = py$m,
+  S = py$S,
+  ground_truth = num_fires %>% slice((dim(num_fires)[1] - 23): dim(num_fires)[1])
+) 
+
+df_pred %>%
+  ggplot(aes(ground_truth.month)) + geom_ribbon(aes(ymin=m-S, ymax=m+S, fill="confidence interval"), alpha=0.2) + 
+  geom_line(aes(y=m, colour="posterior mean")) + 
+  geom_line(aes(y=ground_truth.NFires, colour="ground truth")) + 
+  ylab("number of wildfires") + 
+  xlab("time") + 
+  ggtitle("Prediction of future wildfires") + 
+  scale_color_manual(name = "legend", values = colors) + 
+  scale_fill_manual(values = c("confidence interval" = "black"))
+```
+
+As we can see our model does a great job at predicting the future. Especially in the year 2015 the posterior mean follows the ground truth very closely. In the second year there are some deviations, especially in July where our model predicted a higher number of wild fires than actually occurred.
+
+# Summary
+
+In the above analysis we developed a Log-Normal-Poisson model capable of representing an inhomogeneous Poisson process with a time-dependent emission rate $\lambda(t)$ that shows periodic behaviour. The model displayed very good performance, especially in the first year of the two year prediction window. This is mostly thanks to the strong periodicity of $\lambda$ which we can very accurately and efficiently model using our proposed Fourier expansion ansatz.
+
+Still this model isn't perfect. Further improvements could be achieved by accounting for linear / quadratic / polynomial trends by adding another trend model to the model for $\lambda$ resulting in a generalised linear model (GLM). Additionally a further analysis of the autocorrelation function could allow us to pre-filter Fourier frequencies, thus allowing us to increase the number of Fourier modes without increasing the computational costs of the model. This would allow us increase the spectral resolution which would allow the model to model small-scale dynamics more accurately. Ultimately the Log-Normal-Poisson model is an extremely versatile model that can be adapted to many other applications outside of wildfire, some of them might appear in future projects of mine.
+
+In the end climate change is an important topics and especially in the recent years many regions were affected by wildfires. As such we should all do our best to keep climate change from making things worse and making the world a little more liveable for humans and animals alike.

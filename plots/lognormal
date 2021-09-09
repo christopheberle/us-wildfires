@@ -1,0 +1,20 @@
+digraph {
+	"Λ" [label="Λ
+~
+Normal"]
+	"λ" [label="λ
+~
+Lognormal"]
+	"σ" [label="σ
+~
+HalfCauchy"]
+	subgraph cluster444 {
+		N [label="N
+~
+Poisson" style=filled]
+		label=444 labeljust=r labelloc=b style=rounded
+	}
+	"Λ" -> "λ"
+	"σ" -> "λ"
+	"λ" -> N
+}
