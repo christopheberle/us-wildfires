@@ -1,13 +1,13 @@
 digraph {
-	"λ" [label="λ
-~
-Lognormal"]
 	"σ" [label="σ
 ~
 HalfCauchy"]
 	"Λ" [label="Λ
 ~
 Normal"]
+	"λ" [label="λ
+~
+Lognormal"]
 	subgraph cluster444 {
 		N [label="N
 ~

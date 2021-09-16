@@ -5,19 +5,26 @@ digraph {
 Normal"]
 		label=24 labeljust=r labelloc=b style=rounded
 	}
-	subgraph cluster120 {
-		N [label="N
+	subgraph "cluster120 x 24" {
+		"Fourier modes" [label="Fourier modes
 ~
-Poisson" style=filled]
+Deterministic" shape=box]
+		label="120 x 24" labeljust=r labelloc=b style=rounded
+	}
+	subgraph cluster120 {
 		"λ" [label="λ
 ~
 Lognormal"]
 		"Λ" [label="Λ
 ~
 Deterministic" shape=box]
+		N [label="N
+~
+Poisson" style=filled]
 		label=120 labeljust=r labelloc=b style=rounded
 	}
 	"β" -> "Λ"
+	"Fourier modes" -> "Λ"
 	"Λ" -> "λ"
 	"λ" -> N
 }

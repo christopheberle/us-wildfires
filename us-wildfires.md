@@ -8,9 +8,10 @@ Christoph Eberle
 # Introduction
 
 Climate change is a problem that affects us on a global scale. One
-indicator for climate change are wildfires[1]. In this analysis we will
-use a data set hosted by the US’ National Incident Feature Service
-(NIFS) of the [National Wildfire Coordinating
+indicator for climate change are
+wildfires[^1](https://www.wwf.de/fileadmin/fm-wwf/Publikationen-PDF/WWF-Study-Forests-Ablaze.pdf).
+In this analysis we will use a data set hosted by the US’ National
+Incident Feature Service (NIFS) of the [National Wildfire Coordinating
 Group](https://www.nwcg.gov) (NWCG). that contains among other features
 the start and end dates of wildfires occurrences from 1980 to 2016.
 
@@ -115,7 +116,7 @@ df <-  df_raw %>%
          Longitude=DLONGITUDE,
          Latitude = DLATITUDE) %>%
   select(StartDate, Longitude, Latitude) %>%
-  filter(Longitude > -130)
+  filter(Longitude > -130 & Latitude > 20)
 ```
 
 After these steps our data set looks like this
@@ -132,13 +133,25 @@ After these steps our data set looks like this
     ## 9  2016-11-28 01:00:00  -83.34310 35.77000
     ## 10 2016-11-27 01:00:00 -101.67420 35.70400
 
-Now that we have cleaned up our data set we are going to group our data
-by month and sum up all wildfire incidents that occurred withing that
-month. We obtain a time series containing the number of wildfires per
-month from 1980 to 2016. Each data point corresponds to one month. We
-can take a look at the data again
+Now that we have our data cleaned up we can start visualising it. First
+we take a look at where the fires occurred. Below is a map showing the
+cumulative number of wildfires binned into 80 2d bins.
 
-    ## # A tibble: 10 x 2
+``` r
+US <- map_data("usa") 
+ggplot() +
+  geom_polygon(data = US, aes(x=long, y = lat), fill="blue", alpha=0.3) + geom_bin2d(data=df, aes(Longitude, Latitude), bins=80) + scale_fill_gradientn(colours = jet.colors(7)) + xlab("Longitude") + ylab("Latitude") + ggtitle("Cumulative number of  wildfires from 1980-2016")
+```
+
+<img src="us-wildfires_files/figure-gfm/unnamed-chunk-4-1.png" style="display: block; margin: auto;" />
+
+Next we are going to group our data by month and sum up all wildfire
+incidents that occurred within that month. We obtain a time series
+containing the number of wildfires per month from 1980 to 2016. Each
+data point corresponds to one month. We can take a look at the data
+again
+
+    ## # A tibble: 10 × 2
     ##    month               NFires
     ##    <dttm>               <int>
     ##  1 1980-01-01 00:00:00     24
@@ -149,13 +162,13 @@ can take a look at the data again
     ##  6 1980-06-01 00:00:00     75
     ##  7 1980-07-01 00:00:00    145
     ##  8 1980-08-01 00:00:00    131
-    ##  9 1980-09-01 00:00:00     63
-    ## 10 1980-10-01 00:00:00     44
+    ##  9 1980-09-01 00:00:00     62
+    ## 10 1980-10-01 00:00:00     42
 
 Plotting the entire data frame reveals the following dynamics of the
 number of wild fires per month in the US.
 
-<img src="us-wildfires_files/figure-gfm/unnamed-chunk-6-1.png" style="display: block; margin: auto;" />
+<img src="plots/num-wildfires.svg" style="display: block; margin: auto;" />
 
 Now that we have our data cleaned and ready to be analysed we will do
 just that. But before we can get into actually predicting new future
@@ -195,8 +208,7 @@ fix this we exponentiate *Λ* and introduce a new parameter
 (because taking the log of *λ* yields *Λ* which is normally / Gaussian
 distributed). The number of wild fires is then modelled by a Poisson
 distribution 𝒫(*λ*) with emission rate *λ* = *e*<sup>*Λ*</sup>. A
-schematic representation of this model is given in
-@ref(fig:graph-log-normal)
+schematic representation of this model is given below
 
 ``` python
 with pm.Model() as model:
@@ -214,7 +226,8 @@ with pm.Model() as model:
     ## Sequential sampling (1 chains in 1 job)
     ## NUTS: [λ, Λ, σ]
     ## Sampling 1 chain for 1_000 tune and 1_000 draw iterations (1_000 + 1_000 draws total) took 4 seconds.
-    ## There were 83 divergences after tuning. Increase `target_accept` or reparameterize.
+    ## There were 153 divergences after tuning. Increase `target_accept` or reparameterize.
+    ## The acceptance probability does not match the target. It is 0.6104368913097249, but should be close to 0.8. Try to increase the number of tuning steps.
     ## Only one chain was sampled, this makes it impossible to run some convergence checks
 
 <img src="plots/lognormal.svg" title="schematic representation of the hierarchical model for a homogeneous Poisson process." alt="schematic representation of the hierarchical model for a homogeneous Poisson process." style="display: block; margin: auto;" />
@@ -234,7 +247,7 @@ Let’s take a second to take a look at the trace plot of our model.
 
     ## █
 
-<img src="us-wildfires_files/figure-gfm/unnamed-chunk-11-1.png" style="display: block; margin: auto;" />
+<img src="plots/log-normal-posterior-mean.svg" style="display: block; margin: auto;" />
 
 ## A Dynamic Log-Normal-Poisson Model
 
@@ -250,7 +263,7 @@ of wild fires. One thing that helps us in this task is that the data
 shows very strong periodicity as can be seen in the autocorrelation
 function plot below.
 
-<img src="us-wildfires_files/figure-gfm/unnamed-chunk-12-1.png" style="display: block; margin: auto;" />
+<img src="plots/acf.svg" style="display: block; margin: auto;" />
 
 Looking at the autocorrelation function we see that
 
@@ -261,30 +274,41 @@ Looking at the autocorrelation function we see that
 Combining these two points we can propose the following functional form
 for *λ*(*t*)
 
-$$
-\\lambda_N(t)=\\frac{\\beta_0}{2}+\\sum\\limits\_{n=0,2,4,\\dots}^{N}\\left\[\\beta_n\\cos\\left(\\frac{2\\pi}{P}nt\\right) + \\beta\_{n+1}\\sin\\left(\\frac{2\\pi}{P}nt\\right)\\right\]
-$$
+![](https://latex.codecogs.com/svg.latex?%5Clambda(t)%253D%5Cfrac%7B%5Cbeta_0%7D%7B2%7D+%5Csum%5Climits_%7Bn%253D0%252C2%252C4%252C%5Cdots%7D%5E%7BN%7D%5Cleft%5B%5Cbeta_n%5Ccos%5Cleft(%5Cfrac%7B2%5Cpi%7D%7BP%7Dnt%5Cright)%20+%20%5Cbeta_%7Bn+1%7D%5Csin%5Cleft(%5Cfrac%7B2%5Cpi%7D%7BP%7Dnt%5Cright)%5Cright%5D)
 
 where
 
 -   *β*<sub>0</sub> is a global offset
 
--   *β*<sub>1</sub>⋯*β*<sub>*N*</sub> are the Fourier expansion
-    coefficients.
+-   *β*\_1⋯*β*<sub>*N*</sub> are the Fourier expansion coefficients.
 
-The inference task now consists of finding the optimal set of parameters
-**β**<sup>⊺</sup> = (*β*<sub>0</sub>,*β*<sub>1</sub>,…,*β*<sub>*N*</sub>)<sup>⊺</sup>
+Further we will account for a linear trend in *λ*(*t*) of form
+*α* ⋅ *t*. Thus we arrive at
+
+![](https://latex.codecogs.com/svg.latex?%5Clambda(t)%253D%5Calpha%5Ccdot%20t%20+%20%5Cfrac%7B%5Cbeta_0%7D%7B2%7D+%5Csum%5Climits_%7Bn%253D0%252C2%252C4%252C%5Cdots%7D%5E%7BN%7D%5Cleft%5B%5Cbeta_n%5Ccos%5Cleft(%5Cfrac%7B2%5Cpi%7D%7BP%7Dnt%5Cright)%20+%20%5Cbeta_%7Bn+1%7D%5Csin%5Cleft(%5Cfrac%7B2%5Cpi%7D%7BP%7Dnt%5Cright)%5Cright%5D)
+
+Finally we put this parameter into a Log-Normal distribution with
+unknown variance *τ* that we assume to be Inverse Gamma distributed.
+Thus the distribution of the emission parameter *λ*(*t*) reads
+
+![](https://latex.codecogs.com/svg.latex?P(%5Clambda(t)%7C%5Cmu%252C%5Ctau)%253D%5Cfrac%7B1%7D%7B%5Clambda(t)%5Csqrt%7B2%5Cpi%5Ctau%5E2%7D%7D%5Cexp%5Cleft(-%5Cfrac%7B%5Cln(%5Clambda(t)-%5Cmu)%5E2%7D%7B2%5Ctau%5E2%7D%5Cright))
+
+Lastly this *λ*(*t*) is plugged into a Poisson distribution to yield the
+final wild fire count.
+
+A graphic representation of this model can be found in below
 
 ``` python
-n = 12
-P = 12
 model = pm.Model()
-d = r.num_fires["NFires"][300:-24]
+d = r.num_fires["NFires"][:-24]
 
 with model:
     beta = pm.Normal("β",mu=0, sd=10, shape=2 * n)
-    log_lam = pm.Deterministic("Λ", det_dot(fourier_series(np.arange(len(d)),P,n), beta))
-    lam = pm.Lognormal("λ", mu=log_lam, sigma=1.0, shape=len(d))
+    alpha = pm.Normal("α", mu=0, sd=1)
+    trend = alpha * theano.shared(np.arange(0, len(d)))
+    log_lam = pm.Deterministic("Λ", trend + det_dot(fourier_series(np.arange(len(d)),P,n), beta))
+    tau = pm.InverseGamma("τ", alpha=2, beta=1)
+    lam = pm.Lognormal("λ", mu=log_lam, sigma=tau, shape=len(d))
     obs = pm.Poisson("N", mu=lam, observed=d)
     trace = pm.sample(1000,chains=1,return_inferencedata=True)
 ```
@@ -293,31 +317,23 @@ with model:
     ## Auto-assigning NUTS sampler...
     ## Initializing NUTS using jitter+adapt_diag...
     ## Sequential sampling (1 chains in 1 job)
-    ## NUTS: [λ, β]
-    ## Sampling 1 chain for 1_000 tune and 1_000 draw iterations (1_000 + 1_000 draws total) took 58 seconds.
+    ## NUTS: [λ, τ, α, β]
+    ## Sampling 1 chain for 1_000 tune and 1_000 draw iterations (1_000 + 1_000 draws total) took 402 seconds.
+    ## The chain reached the maximum tree depth. Increase max_treedepth, increase target_accept or reparameterize.
     ## Only one chain was sampled, this makes it impossible to run some convergence checks
-
-    ## array([[<AxesSubplot:title={'center':'β'}>,
-    ##         <AxesSubplot:title={'center':'β'}>],
-    ##        [<AxesSubplot:title={'center':'Λ'}>,
-    ##         <AxesSubplot:title={'center':'Λ'}>],
-    ##        [<AxesSubplot:title={'center':'λ'}>,
-    ##         <AxesSubplot:title={'center':'λ'}>]], dtype=object)
 
 <img src="plots/dynamic_lognormal.svg" style="display: block; margin: auto;" />
 
 # Predicting future wildfires
 
-For our model we will use *N* = 12 Fourier frequencies, thus
-**β**<sup>⊺</sup> ∈ ℝ<sup>24</sup> is a *d* = 24-dimensional (one sin 
-and one cos  function per Fourier mode) vector. As a period we choose
-*P* = 12. This value was chosen because the data displays a yearly
-periodicity in the autocorrelation function plot. A graphical
-representation of the model can be found in
-@ref(fig:graph-dynamic-log-normal).
+For our model we will use *N*= 24 Fourier frequencies, thus
+**β**<sup>⊺</sup> is a *d*= 48-dimensional (one sin  and one cos 
+function per Fourier mode) vector. As a period we choose *P*= 12. This
+value was chosen because the data displays a yearly periodicity in the
+autocorrelation function plot.
 
-Now we actually fit our model to the data using MCMC sampling. The trace
-plot can be found below in @ref(fig:trace-dynamic-log-normal)
+Now we actually fit our model to the data using Markov Chain Monte Carlo
+(MCMC) sampling. The trace plot can be found below
 
 <img src="plots/dynamic_lognormal_trace.svg" style="display: block; margin: auto;" />
 
@@ -327,63 +343,103 @@ if the posterior mean can reproduce the training data.
 
     ## █
 
-The posterior predictive check (see @ref(fig:ppc-dynamic-log-normal)) is
-looking good. The posterior is able to reconstruct the input data within
-it’s 1*σ* confidence interval.
+The posterior predictive check is looking good. The posterior is able to
+reconstruct the input data within it’s 1*σ* confidence interval.
 
-<img src="us-wildfires_files/figure-gfm/ppc-dynamic-log-normal-1.png" style="display: block; margin: auto;" />
+<img src="plots/dynamic-log-normal-ppc.svg" style="display: block; margin: auto;" />
 
     ## █
 
 ``` python
-lambda_map = det_dot(fourier_series(np.arange(24),12,n), map_estimate["β"])
-N_post_samps = 100
-post_samps = np.zeros((N_post_samps, 24))
+a = trace["posterior"]["α"][0].mean(axis=0).values 
+b = trace["posterior"]["β"][0].mean(axis=0).values 
+tau = trace["posterior"]["τ"][0].mean(axis=0).values 
+lambda_mean = a*np.arange(len(d), len(d) + 24)+det_dot(fourier_series(np.arange(24),12,n), b)
+post_samps_mean = np.zeros((N_post_samps, 24))
 
 t = np.arange(24)
 for i in range(N_post_samps):
-    a = np.random.lognormal(lambda_map, 1.0, size=24)
+    a = np.random.lognormal(lambda_mean, tau, size=24)
     pred = np.random.poisson(a, size=24)
-    post_samps[i, :] = pred
+    post_samps_mean[i, :] = pred
 
-m = post_samps.mean(axis=0)
-S = post_samps.std(axis=0)
+m_mean = post_samps_mean.mean(axis=0)
+S_mean = post_samps_mean.std(axis=0)
+```
+
+``` python
+a = map_estimate["α"]
+b = map_estimate["β"]
+tau = map_estimate["τ"]
+
+lambda_map =  a*np.arange(len(d), len(d) + 24)+det_dot(fourier_series(np.arange(24),12,n), b) 
+post_samps_map = np.zeros((N_post_samps, 24))
+
+t = np.arange(24)
+for i in range(N_post_samps):
+    a = np.random.lognormal(lambda_map, tau, size=24)
+    pred = np.random.poisson(a, size=24)
+    post_samps_map[i, :] = pred
+
+m_map = post_samps_map.mean(axis=0)
+S_map = post_samps_map.std(axis=0)
 ```
 
 Having checked the model’s convergence as well as having performed a
 posterior predictive check we can finally make a prediction for future
 wildfires. We fitted the model on all *but* the last 24 data points (the
-last two years). To make a prediction we proceed as follows. First we
-use the obtained values for **β**<sup>⊺</sup> from the maximum a
-posteriori (MAP) solution to find the values for *λ*(*t*) in the years
-2015-2016. Next we plug these values into the log-normal distribution
-from which we then draw a sample value *λ*<sup>⋆</sup>. Finally this
-value is put into the Poisson distribution and produces a sample for the
-number of wildfires at that time *N*<sup>⋆</sup> ↩ 𝒫(*λ*<sup>⋆</sup>).
-We repeat this process for 100 times and calculate the posterior mean.
-This is seen below.
+last two years).
+
+Once we have fit the model we need to extract actual values for the
+parameters *α*, *β*, *τ* from the probability distributions seen in the
+trace plot. For this there are two common strategies:
+
+1.  Choose the values that maximise the respective probability
+    distributions. This yields the maximum a posteriori (MAP) estimate.
+
+2.  Choose the average (mean) values of the respective Markov chains.
+
+No matter the strategy however we will obtain a set of values
+*α*<sup>⋆</sup>, *β*<sup>⋆</sup>, *τ*<sup>⋆</sup> which we will plug
+into the model alongside the dates of the days for which we want to
+predict the number of wild fires. This will then yield our posterior
+prediction.
+
+Given our posterior and our values
+*α*<sup>⋆</sup>, *β*<sup>⋆</sup>, *τ*<sup>⋆</sup> we can sample possible
+realisations of the number of wild fires. We repeat this for 200 times
+and calculate the posterior mean. Below is a plot visualising the 200
+posterior samples as well as the posterior mean.
+
+<img src="plots/posterior-samples.svg" style="display: block; margin: auto;" />
+
+In the above plot we see that the posterior produces the sought-after
+periodicity with the correct period. The MAP and the mean estimate for
+the model’s parameters produce similar results. Given the posterior
+samples we can calculate the posterior mean as well as the associated
+uncertainty and compare it to the actual (unseen) data.
 
 ``` r
-colors <- c("posterior mean" = "blue", "ground truth" = "red")
+colors <- c("posterior mean" = "purple", "posterior mean (MAP)" = "magenta", "ground truth" = "black")
 
-df_pred <- data.frame(
-  m = py$m,
-  S = py$S,
-  ground_truth = num_fires %>% slice((dim(num_fires)[1] - 23): dim(num_fires)[1])
-) 
-
-df_pred %>%
-  ggplot(aes(ground_truth.month)) + geom_ribbon(aes(ymin=m-S, ymax=m+S, fill="confidence interval"), alpha=0.2) + 
-  geom_line(aes(y=m, colour="posterior mean")) + 
+p <- df_pred %>%
+  ggplot(aes(ground_truth.month)) + 
+  geom_ribbon(aes(ymin=m_map-S_map, ymax=m_map+S_map, fill="confidence interval (MAP)"), alpha=0.2) +
+  geom_ribbon(aes(ymin=m_mean-S_mean, ymax=m_mean+S_mean, fill="confidence interval"), alpha=0.2) +
+  geom_line(aes(y=m_map, colour="posterior mean")) + 
   geom_line(aes(y=ground_truth.NFires, colour="ground truth")) + 
+  geom_line(aes(y=m_mean, colour="posterior mean (MAP)")) +
   ylab("number of wildfires") + 
   xlab("time") + 
   ggtitle("Prediction of future wildfires") + 
   scale_color_manual(name = "legend", values = colors) + 
-  scale_fill_manual(values = c("confidence interval" = "black"))
+  scale_fill_manual(values = c("confidence interval" = "purple", "confidence interval (MAP)" = "magenta"))
+
+ggsave("plots/dynamic-log-normal-prediction.svg")
+include_graphics("plots/dynamic-log-normal-prediction.svg")
 ```
 
-<img src="us-wildfires_files/figure-gfm/unnamed-chunk-18-1.png" style="display: block; margin: auto;" />
+<img src="plots/dynamic-log-normal-prediction.svg" style="display: block; margin: auto;" />
 
 As we can see our model does a great job at predicting the future.
 Especially in the year 2015 the posterior mean follows the ground truth
@@ -418,5 +474,3 @@ In the end climate change is an important topics and especially in the
 recent years many regions were affected by wildfires. As such we should
 all do our best to keep climate change from making things worse and
 making the world a little more liveable for humans and animals alike.
-
-[1] <https://www.wwf.de/fileadmin/fm-wwf/Publikationen-PDF/WWF-Study-Forests-Ablaze.pdf>
